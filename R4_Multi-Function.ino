@@ -1,0 +1,487 @@
+/*
+Created by @DeWentzel on 2024/11/22
+
+This is a code for a Arduino UNO R4 Wi-Fi that makes it multi-functional. 
+The code displays a menu with submenus on a OLED display, displays the current weather, has a webserver, reads distance from an HC-SR04 ultrasonic sensor and displays it.  For now, the webserver is just to start the screensaver remotely and turning on and 
+off an LED on pin 13 (The Built in LED). The code does the following:
+
+Displays a home screen
+Displays a menu
+Displays Distance from an Ultrasonic Sensor
+Displays Current Weather
+Displays a simple animation
+Displays info for webserver
+Buttons to controll arduino from a webserver
+
+*NOTE: If you want to acces the webserver, you will have to enter the R4's IP adress in your web browser. 
+You can find the IP adress under the "INFO" Tab in the menu on the OLED display.
+
+List Of components:
+
+1x Arduino UNO R4 Wi-Fi
+1x SSD 1306 128x64 OLED Display
+1x HC-SR04 ultrasonic sensor
+1x Breadboard 
+1x Pushbutton
+
+Connections:
+
+SSD 1306:
+
+VCC --> 5V
+GND --> GND
+SCL --> SCL OR A5
+SDA --> SDA OR A4
+
+HC-SR04:
+
+VCC -->  5V
+Trig --> 4
+Echo --> 5
+GND -->  GND
+
+Joystick
+
+GND --> GND
++5V --> 5V
+VRX --> A2
+VRY --> A1
+SW  --> A0
+
+Button:  
+
+OUT --> A3
+
+*/
+
+
+
+
+#include <ArduinoHttpClient.h>
+#include <WiFiS3.h>
+#include <Arduino_JSON.h>
+#include <Adafruit_GFX.h>
+#include <Adafruit_SSD1306.h>
+
+
+// OLED display settings
+#define SCREEN_WIDTH 128
+#define SCREEN_HEIGHT 64
+Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, -1);
+
+const char* ssid = "YOUR_WIFI_SSID";                   //Replace With your Network name      
+const char* password = "YOUR_WIFI_PASSWORD";          //Replace with your Network Password
+WiFiServer server(80);
+
+const char* dvdText = "DVD";                             //Text for bouncing screensaver like the DVD logo
+int x = 0, y = 0;
+int xSpeed = 3, ySpeed = 2;
+int textWidth = 22, textHeight = 12;
+
+// Joystick pins
+#define JOY_X A2
+#define JOY_Y A1
+#define BTN_MENU A0
+
+#define BTN_BACK A3
+
+bool isMenu = false;
+bool isSubPage = false;
+bool isAnimating = false;
+int currentSelection = 0;
+
+// Ultrasonic Sensor pins
+#define echoPin 5
+#define trigPin 4
+
+float duration, distance;
+
+// Fan relay pin
+#define LED 13
+
+
+
+
+
+//Bitmap for home screen
+const unsigned char Home_Screen[] PROGMEM = { 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 
+	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 
+	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 
+	0x00, 0x00, 0x3f, 0xfc, 0x00, 0x00, 0x00, 0x0f, 0xff, 0x00, 0x00, 0x00, 0x00, 0x01, 0xff, 0xff, 
+	0x80, 0x00, 0x00, 0x7f, 0xff, 0xe0, 0x00, 0x00, 0x00, 0x07, 0xff, 0xff, 0xe0, 0x00, 0x00, 0xff, 
+	0xff, 0xf8, 0x00, 0x00, 0x00, 0x0f, 0xff, 0xff, 0xf8, 0x00, 0x03, 0xff, 0xff, 0xfe, 0x00, 0x00, 
+	0x00, 0x1f, 0xff, 0xff, 0xfc, 0x00, 0x07, 0xff, 0xff, 0xff, 0x00, 0x00, 0x00, 0x3f, 0xff, 0xff, 
+	0xfe, 0x00, 0x0f, 0xff, 0xff, 0xff, 0x80, 0x00, 0x00, 0x7f, 0xff, 0xff, 0xff, 0x00, 0x1f, 0xff, 
+	0xff, 0xff, 0xc0, 0x00, 0x00, 0xff, 0xe0, 0x0f, 0xff, 0x80, 0x3f, 0xf8, 0x00, 0xff, 0xe0, 0x00, 
+	0x01, 0xff, 0x80, 0x01, 0xff, 0xc0, 0x7f, 0xe0, 0x00, 0x3f, 0xf0, 0x00, 0x01, 0xff, 0x00, 0x00, 
+	0x7f, 0xe0, 0xff, 0xc0, 0x00, 0x1f, 0xf8, 0x00, 0x03, 0xfc, 0x00, 0x00, 0x3f, 0xf1, 0xff, 0x00, 
+	0x00, 0x0f, 0xf8, 0x00, 0x07, 0xfc, 0x00, 0x00, 0x1f, 0xfb, 0xfe, 0x00, 0x00, 0x07, 0xfc, 0x00, 
+	0x07, 0xf8, 0x00, 0x00, 0x0f, 0xfb, 0xfc, 0x00, 0x00, 0x03, 0xfc, 0x00, 0x07, 0xf0, 0x00, 0x00, 
+	0x07, 0xff, 0xfc, 0x00, 0xf0, 0x01, 0xfc, 0x00, 0x0f, 0xf0, 0x00, 0x00, 0x03, 0xff, 0xf8, 0x00, 
+	0xf0, 0x01, 0xfe, 0x00, 0x0f, 0xe0, 0x00, 0x00, 0x01, 0xff, 0xf0, 0x00, 0xf0, 0x00, 0xfe, 0x00, 
+	0x0f, 0xe0, 0x00, 0x00, 0x01, 0xff, 0xe0, 0x00, 0xf0, 0x00, 0xfe, 0x00, 0x0f, 0xe0, 0x00, 0x00, 
+	0x00, 0xff, 0xe0, 0x0f, 0xff, 0x00, 0xfe, 0x00, 0x0f, 0xe0, 0x3f, 0xfe, 0x00, 0x7f, 0xc0, 0x0f, 
+	0xff, 0x00, 0x7e, 0x00, 0x0f, 0xc0, 0x3f, 0xfe, 0x00, 0x7f, 0xc0, 0x0f, 0xff, 0x00, 0x7e, 0x00, 
+	0x0f, 0xc0, 0x3f, 0xfe, 0x00, 0x7f, 0xc0, 0x0f, 0xff, 0x00, 0xfe, 0x00, 0x0f, 0xe0, 0x00, 0x00, 
+	0x00, 0xff, 0xe0, 0x00, 0xf0, 0x00, 0xfe, 0x00, 0x0f, 0xe0, 0x00, 0x00, 0x01, 0xff, 0xe0, 0x00, 
+	0xf0, 0x00, 0xfe, 0x00, 0x0f, 0xe0, 0x00, 0x00, 0x01, 0xff, 0xf0, 0x00, 0xf0, 0x00, 0xfe, 0x00, 
+	0x0f, 0xe0, 0x00, 0x00, 0x03, 0xff, 0xf0, 0x00, 0xf0, 0x01, 0xfe, 0x00, 0x0f, 0xf0, 0x00, 0x00, 
+	0x07, 0xff, 0xf8, 0x00, 0x00, 0x01, 0xfc, 0x00, 0x07, 0xf0, 0x00, 0x00, 0x0f, 0xff, 0xfc, 0x00, 
+	0x00, 0x03, 0xfc, 0x00, 0x07, 0xf8, 0x00, 0x00, 0x0f, 0xf3, 0xfe, 0x00, 0x00, 0x03, 0xf8, 0x00, 
+	0x07, 0xfc, 0x00, 0x00, 0x1f, 0xf1, 0xff, 0x00, 0x00, 0x07, 0xf8, 0x00, 0x03, 0xfe, 0x00, 0x00, 
+	0x3f, 0xe0, 0xff, 0x80, 0x00, 0x0f, 0xf0, 0x00, 0x01, 0xff, 0x80, 0x00, 0xff, 0xc0, 0xff, 0xe0, 
+	0x00, 0x3f, 0xe0, 0x00, 0x01, 0xff, 0xe0, 0x01, 0xff, 0x80, 0x7f, 0xf8, 0x00, 0x7f, 0xe0, 0x00, 
+	0x00, 0xff, 0xfc, 0x1f, 0xff, 0x00, 0x3f, 0xff, 0x03, 0xff, 0xc0, 0x00, 0x00, 0x7f, 0xff, 0xff, 
+	0xff, 0x00, 0x1f, 0xff, 0xff, 0xff, 0x80, 0x00, 0x00, 0x3f, 0xff, 0xff, 0xfe, 0x00, 0x0f, 0xff, 
+	0xff, 0xff, 0x00, 0x00, 0x00, 0x0f, 0xff, 0xff, 0xf8, 0x00, 0x03, 0xff, 0xff, 0xfe, 0x00, 0x00, 
+	0x00, 0x07, 0xff, 0xff, 0xf0, 0x00, 0x01, 0xff, 0xff, 0xf8, 0x00, 0x00, 0x00, 0x01, 0xff, 0xff, 
+	0xc0, 0x00, 0x00, 0x7f, 0xff, 0xf0, 0x00, 0x00, 0x00, 0x00, 0x3f, 0xff, 0x00, 0x00, 0x00, 0x0f, 
+	0xff, 0xc0, 0x00, 0x00, 0x00, 0x00, 0x03, 0xf0, 0x00, 0x00, 0x00, 0x01, 0xfc, 0x00, 0x00, 0x00, 
+	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 
+	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 
+	0x00, 0x00, 0x00, 0x00, 0x00, 0xf0, 0x3f, 0x87, 0xf8, 0x70, 0xe7, 0xfc, 0x70, 0xc3, 0xf8, 0x00, 
+	0x00, 0xf8, 0x3f, 0xc7, 0xfc, 0x70, 0xe7, 0xfc, 0x78, 0xc7, 0xfc, 0x00, 0x00, 0xf8, 0x39, 0xc7, 
+	0x1e, 0x70, 0xe0, 0xe0, 0x78, 0xc7, 0x1c, 0x00, 0x00, 0xf8, 0x30, 0xc7, 0x0e, 0x70, 0xe0, 0xe0, 
+	0x7c, 0xce, 0x0e, 0x00, 0x01, 0xdc, 0x30, 0xc7, 0x0e, 0x70, 0xe0, 0xe0, 0x7c, 0xce, 0x0e, 0x00, 
+	0x01, 0xdc, 0x39, 0xc7, 0x06, 0x70, 0xe0, 0xe0, 0x6c, 0xce, 0x0e, 0x00, 0x01, 0x9c, 0x3f, 0x87, 
+	0x06, 0x70, 0xe0, 0xe0, 0x6e, 0xce, 0x0e, 0x00, 0x03, 0x8e, 0x3f, 0x87, 0x06, 0x70, 0xe0, 0xe0, 
+	0x66, 0xce, 0x0e, 0x00, 0x03, 0x8e, 0x33, 0x87, 0x0e, 0x70, 0xe0, 0xe0, 0x67, 0xce, 0x0e, 0x00, 
+	0x03, 0xfe, 0x31, 0xc7, 0x0e, 0x70, 0xe0, 0xe0, 0x63, 0xce, 0x0e, 0x00, 0x03, 0xfe, 0x31, 0xc7, 
+	0x1e, 0x70, 0xe0, 0xe0, 0x63, 0xcf, 0x1c, 0x00, 0x07, 0x07, 0x30, 0xe7, 0xfc, 0x3f, 0xc7, 0xfc, 
+	0x63, 0xc7, 0xfc, 0x00, 0x07, 0x07, 0x30, 0xe7, 0xf8, 0x3f, 0xc7, 0xfc, 0x61, 0xc3, 0xf8, 0x00, 
+	0x06, 0x03, 0x30, 0x63, 0x80, 0x0f, 0x03, 0xf8, 0x60, 0xc0, 0xe0, 0x00, 0x00, 0x00, 0x00, 0x00, 
+	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 
+	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
+   };
+
+// Weather API settings
+String openWeatherMapApiKey = "Your_Openweather_API_Key";   //Replace with your Openweather API key (You can get an API key by signing up for a free account)
+String city = "Your_City_Name";                             //Replace with your City name (e.g Belfast)
+String countryCode = "Your_Country_Code";                   //Replace with your country code (e.g UK)
+String weatherDescription = "";
+String temperature = "";
+
+//Settings for weather updates
+unsigned long lastWeatherUpdate = 0;
+const unsigned long weatherUpdateInterval = 10000; // 10 seconds
+
+// Function prototypes
+void startDisp();
+void displayHome();
+void manageMenu();
+void handleJoystick();
+void displayMenu();
+void highlightSelection();
+void displaySubPage(int option);
+void executeMenuOption(int option);
+void updateUltrasonicDisplay();
+void updateWeatherDisplay();
+void fetchWeather();
+void Animation();
+void WebControl();
+void ultrasonicMeasure();
+void infosubMenu();
+
+
+void setup() {
+
+  display.display();
+  delay(1000);
+  display.clearDisplay();
+
+
+  pinMode(BTN_MENU, INPUT_PULLUP);
+  pinMode(BTN_BACK, INPUT_PULLUP);
+
+
+  pinMode(trigPin, OUTPUT);
+  pinMode(echoPin, INPUT);
+
+  pinMode(LED, OUTPUT);
+
+  Serial.begin(9600);
+  WiFi.begin(ssid, password);
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    Serial.print(".");
+  }
+  server.begin();
+
+  
+  startDisp();
+}
+
+void loop() {
+  manageMenu();
+  WebControl();
+
+  if (isAnimating) {
+    Animation();
+  }
+
+  if (currentSelection == 1 && millis() - lastWeatherUpdate > weatherUpdateInterval) {
+    fetchWeather();
+    lastWeatherUpdate = millis();
+  }
+}
+
+void startDisp() {
+  display.begin(SSD1306_SWITCHCAPVCC, 0x3C);
+  display.clearDisplay();
+  display.setTextSize(4);
+  display.setTextColor(SSD1306_WHITE);
+  displayHome();
+}
+
+void displayHome() {
+  display.clearDisplay();
+  display.drawBitmap(25, 0, Home_Screen, 90, 64, SSD1306_WHITE);
+  display.display();
+}
+
+void manageMenu() {
+  if (!isMenu && digitalRead(BTN_MENU) == LOW) {
+    isMenu = true;
+    displayMenu();
+    delay(200);
+  }
+
+  if (isMenu && !isSubPage) {
+    handleJoystick();
+    if (digitalRead(BTN_MENU) == LOW) {
+      isSubPage = true;
+      executeMenuOption(currentSelection);
+      delay(200);
+    }
+
+    if (digitalRead(BTN_BACK) == LOW) {
+      isMenu = false;
+      displayHome();
+      delay(200);
+    }
+  }
+
+  if (isSubPage && digitalRead(BTN_BACK) == LOW) {
+    isSubPage = false;
+    isAnimating = false;
+    isMenu = true;
+    displayMenu();
+    delay(200);
+  }
+}
+
+void displayMenu() {                   
+  display.clearDisplay();
+  const char* menuOptions[] = {"Ultrasonic Sensor", "Weather", "Info", "Screensaver"}; //Menu Option Names
+  display.setTextSize(1);
+  display.setTextColor(SSD1306_WHITE);
+  for (int i = 0; i < 4; i++) {
+    display.setCursor(10, 10 + i * 12);
+    display.print(menuOptions[i]);
+  }
+  highlightSelection();
+  display.display();
+}
+
+void highlightSelection() {
+  display.drawRect(5, 8 + currentSelection * 12, 118, 12, SSD1306_WHITE); //Draw rectangle around selected option
+}
+
+void handleJoystick() {
+  int joyY = analogRead(JOY_Y);
+  if (joyY < 400) {
+    currentSelection = max(0, currentSelection - 1);
+    displayMenu();
+  } else if (joyY > 600) {
+    currentSelection = min(3, currentSelection + 1);
+    displayMenu();
+  }
+  delay(200);
+}
+
+void displaySubPage(int option) {                  //Display Subpages
+  display.clearDisplay();
+  if (option == 0) {
+    while (isSubPage) {
+      ultrasonicMeasure();
+      updateUltrasonicDisplay();
+      if (digitalRead(BTN_BACK) == LOW) {
+        isSubPage = false;
+        isMenu = true;
+        displayMenu();
+        delay(200);
+        break;
+      }
+      delay(200);
+    }
+  } else if (option == 1) {
+    while (isSubPage) {
+      updateWeatherDisplay();
+      if (digitalRead(BTN_BACK) == LOW) {
+        isSubPage = false;
+        isMenu = true;
+        displayMenu();
+        delay(200);
+        break;
+      }
+      delay(200);
+    }
+  } else if (option == 2) {
+    infosubMenu();  // Handle info submenu
+  }
+}
+
+void executeMenuOption(int option) {                     //Execute Menu Options
+  if (option == 0) {
+    displaySubPage(0);
+  } else if (option == 1) {
+    fetchWeather();
+    displaySubPage(1);
+  } else if (option == 2) {
+    displaySubPage(2);  // Show Device Control options
+  } else if (option == 3) {
+    isAnimating = true;
+  }
+}
+
+void infosubMenu() {                    //Display Info
+  IPAddress ip = WiFi.localIP();
+
+
+
+  display.clearDisplay();
+  display.setTextSize(2);
+  display.setTextColor(SSD1306_WHITE);
+  display.setCursor(0, 0);
+  display.print("Info:");
+  display.setCursor(0, 20);
+  display.setTextSize(1);
+  display.print("Network:");
+  display.print(ssid);
+  display.setCursor(0, 40);
+  display.setTextSize(1);
+  display.print("IP:");
+  display.print(ip);
+  
+  display.display();
+}
+
+
+
+
+void updateUltrasonicDisplay() {            //Display Ultrasonic Sensor Info
+  display.clearDisplay();
+  display.setCursor(10, 10);
+  display.setTextSize(1);
+  display.print("Distance: ");
+  display.print(distance);
+  display.print(" cm");
+  display.display();
+}
+
+void updateWeatherDisplay() {                //Display Weather info
+  display.clearDisplay();
+  display.setCursor(0, 0);
+  display.setTextSize(1);
+  display.print("Weather:");
+  display.setCursor(0, 10);
+  display.print("Temp: ");
+  display.print(temperature);
+  display.print("C");
+  display.setCursor(0, 40);
+  display.print(weatherDescription);
+  display.display();
+}
+
+void fetchWeather() {                                //Fetch weather info from Openweather
+  if (WiFi.status() == WL_CONNECTED) {
+    WiFiClient wifiClient;
+    HttpClient http(wifiClient, "api.openweathermap.org", 80);
+
+    String url = "/data/2.5/weather?q=" + city + "," + countryCode + "&units=metric&appid=" + openWeatherMapApiKey;
+    http.get(url);
+
+    int httpCode = http.responseStatusCode();
+    if (httpCode > 0) {
+      String payload = http.responseBody();
+      JSONVar jsonObj = JSON.parse(payload);
+      if (JSON.typeof(jsonObj) == "undefined") {
+        Serial.println("Parsing input failed!");
+        return;
+      }
+      temperature = JSON.stringify(jsonObj["main"]["temp"]);
+      weatherDescription = JSON.stringify(jsonObj["weather"][0]["description"]);
+    } else {
+      Serial.print("HTTP GET failed, error: ");
+      Serial.println(httpCode);
+    }
+
+    http.stop();
+  } else {
+    Serial.println("WiFi not connected");
+  }
+}
+
+void ultrasonicMeasure() {                   //Measuring Distance from ultrasonic sensor
+  digitalWrite(trigPin, LOW);
+  delayMicroseconds(2);
+  digitalWrite(trigPin, HIGH);
+  delayMicroseconds(10);
+  digitalWrite(trigPin, LOW);
+  
+  duration = pulseIn(echoPin, HIGH);
+  distance = (duration * 0.0344) / 2;
+}
+
+void Animation() {                                   //DVD Animation
+  display.clearDisplay();
+  display.setTextSize(1);
+  display.setCursor(x, y);
+  display.print(dvdText);
+  
+  x += xSpeed;
+  y += ySpeed;
+  
+  if (x <= 0 || x + textWidth >= SCREEN_WIDTH) xSpeed = -xSpeed;
+  if (y <= 0 || y + textHeight >= SCREEN_HEIGHT) ySpeed = -ySpeed;
+
+  display.display();
+  delay(25);
+}
+
+void WebControl() {                                        //For WiFi controll
+  WiFiClient client = server.available();
+  if (client) {
+    String request = "";
+    while (client.connected() && !client.available()) {
+      delay(1);
+    }
+    while (client.available()) {
+      char c = client.read();
+      request += c;
+    }
+
+    if (request.indexOf("/Start/on") != -1) {
+      isAnimating = true;
+    }
+        if (request.indexOf("/LED/on") != -1) {
+      digitalWrite(LED, HIGH);
+    }
+        if (request.indexOf("/LED/off") != -1) {
+      digitalWrite(LED, LOW);
+    }
+
+    client.println("HTTP/1.1 200 OK");
+    client.println("Content-type: text/html");
+    client.println();
+    client.println("<html><body>");
+    client.println("<h1>Control</h1>");
+    client.println("<p><a href=\"/Start/on\">Start Animation</a></p>");
+    client.println("<p><a href=\"/LED/on\">LED ON</a></p>");
+    client.println("<p><a href=\"/LED/off\">LED OFF</a></p>");
+    client.println("</body></html>");
+    client.stop();
+  }
+}
+
+
